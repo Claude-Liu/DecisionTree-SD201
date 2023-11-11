@@ -1,6 +1,7 @@
 from typing import List
 
 from PointSet import PointSet, FeaturesTypes
+from Node import Node
 
 class Tree:
     """A decision Tree
@@ -14,7 +15,8 @@ class Tree:
                  features: List[List[float]],
                  labels: List[bool],
                  types: List[FeaturesTypes],
-                 h: int = 1):
+                 h: int = 1,
+                 min_split_points: int = 1):
         """
         Parameters
         ----------
@@ -30,25 +32,20 @@ class Tree:
                 The types of the features.
         """
         
-        self.points = PointSet(features, labels, types)
-        features_transpose = self.points.features.T
-        #print(self.points.labels)
-        #print(features_transpose)
-        self.best_feature, _ = self.points.get_best_gain()
+        self.root = Node(PointSet(features, labels, types))
+        self.split_all(self.root, h, min_split_points)
 
-        #print(self.best_feature)
-        if self.best_feature == None:
-            self.chilfPoints_0 = None
-            self.childPoints_1 = None
+    def split_all(self,current_node: Node, h: int, min_split_points: int):
+        if h==0:
             return
-        labels_0 = self.points.labels[features_transpose[self.best_feature]==0.0]
-        features_0 = self.points.features[features_transpose[self.best_feature]==0.0]
-        self.childPoints_0 = PointSet(features_0, labels_0, self.points.types)
+        if len(current_node) <= min_split_points:
+            return
+        if current_node.split(min_split_points)==True:
+            self.split_all(current_node.leftChild, h-1, min_split_points)
+            self.split_all(current_node.rightChild, h-1, min_split_points)
+        else:
+            return
 
-        labels_1 = self.points.labels[features_transpose[self.best_feature]==1.0]
-        features_1 = self.points.features[features_transpose[self.best_feature]==1.0]
-        self.childPoints_1 = PointSet(features_1, labels_1, self.points.types)
-        
 
     def decide(self, features: List[float]) -> bool:
         """Give the guessed label of the tree to an unlabeled point
@@ -64,14 +61,30 @@ class Tree:
                 The label of the unlabeled point,
                 guessed by the Tree
         """
+        return self.decide_(features, self.root)
+
+    def decide_(self, features, current_node: Node):
         def vote(labels):
             return (labels==True).sum() > (labels==False).sum()
         
-        if self.best_feature == None:
-            return vote(self.points.labels)
-        critical_feature = features[self.best_feature]
-        if critical_feature == 0.0:
-            return vote(self.childPoints_0.labels)
+        if current_node.best_feature == None:
+            return vote(current_node.pointSet.labels)
+        critical_feature = features[current_node.best_feature]
+        type = current_node.pointSet.types[current_node.best_feature]
+        if type == FeaturesTypes.BOOLEAN:
+            if critical_feature == 0:
+                return self.decide_(features, current_node.leftChild)
+            else:
+                return self.decide_(features, current_node.rightChild)
+        elif type == FeaturesTypes.CLASSES:
+            if critical_feature == current_node.threshold:
+                return self.decide_(features, current_node.leftChild)
+            else:
+                return self.decide_(features, current_node.rightChild)
+        elif type == FeaturesTypes.REAL:
+            if critical_feature < current_node.threshold:
+                return self.decide_(features, current_node.leftChild)
+            else:
+                return self.decide_(features, current_node.rightChild)
         else:
-            return vote(self.childPoints_1.labels)
-
+            raise(Exception('Unknown feature type'))

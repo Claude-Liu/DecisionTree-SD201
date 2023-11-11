@@ -3,6 +3,8 @@ from typing import List, Tuple
 from enum import Enum
 import numpy as np
 
+MIN_LIMIT = -1
+
 class FeaturesTypes(Enum):
     """Enumerate possible features types"""
     BOOLEAN=0
@@ -41,6 +43,10 @@ class PointSet:
         self.types = types
         self.features = np.array(features)
         self.labels = np.array(labels)
+        self.best_feature = None
+        self.best_gini = None
+        self.best_threshold = None
+        self.best_split_found = False
     
     def get_gini(self) -> float:
         """Computes the Gini score of the set of points
@@ -50,12 +56,126 @@ class PointSet:
         float
             The Gini score of the set of points
         """
+        if len(self.labels)==0:
+            return 0.0
         num_pos = (self.labels==1.0).sum()
         num_neg = (self.labels==0.0).sum()
         num = len(self.labels)
         gini = 1 - (num_pos/num)**2 - (num_neg/num)**2
         return gini
+    
+    def get_gini_gain(self,feature,type,gini, min_split_points):
+        if type==FeaturesTypes.BOOLEAN:
+            # get the slice of self.labels for which the feature is 0
+            labels_0 = self.labels[feature==0.0]
+            features_0 = self.features[feature==0.0]
+            pointSet_0 = PointSet(features_0, labels_0, self.types)
+            # get the slice of self.labels for which the feature is 1
+            labels_1 = self.labels[feature==1.0]
+            features_1 = self.features[feature==1.0]
+            pointSet_1 = PointSet(features_1, labels_1, self.types)
+            if 0<len(pointSet_0.labels) < min_split_points or 0<len(pointSet_1.labels) < min_split_points:
+                gini_gain = MIN_LIMIT
+            else:
+                gini_gain = gini-((len(labels_0)/len(self.labels))*pointSet_0.get_gini() + (len(labels_1)/len(self.labels))*pointSet_1.get_gini())
+            threshold = None
+        elif type==FeaturesTypes.CLASSES:
+            # set initial value to -1 so that we will always find a better value (0)
+            gini_gain = MIN_LIMIT
+            threshold = None
+            unique_feature = np.unique(feature)
+            for i in unique_feature:
+                # get the slice of self.labels for which the feature is 0
+                labels_0 = self.labels[feature==i]
+                features_0 = self.features[feature==i]
+                pointSet_0 = PointSet(features_0, labels_0, self.types)
+                # get the slice of self.labels for which the feature is 1
+                labels_1 = self.labels[feature!=i]
+                features_1 = self.features[feature!=i]
+                pointSet_1 = PointSet(features_1, labels_1, self.types)
+                if 0<len(pointSet_0.labels) < min_split_points or 0<len(pointSet_1.labels) < min_split_points:
+                    continue
+                gini_gain_i = gini-((len(labels_0)/len(self.labels))*pointSet_0.get_gini() + (len(labels_1)/len(self.labels))*pointSet_1.get_gini())
+                if gini_gain_i > gini_gain:
+                    gini_gain = gini_gain_i
+                    threshold = i
+            # assert threshold != None
+        elif type==FeaturesTypes.REAL:
+            # set initial value to -1 so that we will always find a better value (0)
+            gini_gain = MIN_LIMIT
+            threshold = None
+            # sort the feature
+            feature_sorted = np.sort(np.unique(feature))
+            for i,thres in enumerate(feature_sorted):
+                # get the slice of self.labels for which the feature is 0
+                labels_0 = self.labels[feature<thres]
+                features_0 = self.features[feature<thres]
+                pointSet_0 = PointSet(features_0, labels_0, self.types)
+                # get the slice of self.labels for which the feature is 1
+                labels_1 = self.labels[feature>=thres]
+                features_1 = self.features[feature>=thres]
+                pointSet_1 = PointSet(features_1, labels_1, self.types)
+                if 0<len(pointSet_0.labels) < min_split_points or 0<len(pointSet_1.labels) < min_split_points:
+                    continue
+                gini_gain_i = gini-((len(labels_0)/len(self.labels))*pointSet_0.get_gini() + (len(labels_1)/len(self.labels))*pointSet_1.get_gini())
+                if gini_gain_i > gini_gain:
+                    gini_gain = gini_gain_i
+                    if i-1>=0:
+                        # threshold is the mean of the two closest values from the two splits
+                        thres = (feature_sorted[i-1]+thres)/2
 
+                    threshold = thres
+            assert threshold != None
+        else:
+            raise(Exception("Unknown type"))
+            
+        return gini_gain, threshold
+
+    def get_best_gain_threshold(self, min_split_points=1) -> Tuple[int, float]:
+        """Compute the feature along which splitting provides the best gain
+
+        Returns
+        -------
+        int
+            The ID of the feature along which splitting the set provides the
+            best Gini gain.
+        float
+            The best Gini gain achievable by splitting this set along one of
+            its features.
+        """
+        all_gini = []
+        all_threshold = []
+        # get the transpose of the features matrix
+        features_transpose = self.features.T
+        if len(self.labels)==0:
+            return None, None, None
+        gini = self.get_gini()
+        for feature, type in zip(features_transpose, self.types):
+            gini_gain, threshold = self.get_gini_gain(feature, type, gini, min_split_points)
+            if gini_gain==MIN_LIMIT:
+                all_gini +=[MIN_LIMIT]
+                all_threshold += [threshold]
+                continue
+            all_gini +=[gini_gain]
+            all_threshold += [threshold]
+        best_feature = np.argmax(np.array(all_gini))
+        best_shreshold = all_threshold[best_feature]
+        best_gini = np.array(all_gini).max()
+        if best_gini==MIN_LIMIT:
+            return None, None, None
+        # check if the split is possible
+        if self.types[best_feature] == FeaturesTypes.BOOLEAN:
+            if len(self.labels[features_transpose[best_feature]==0.0])==0 or len(self.labels[features_transpose[best_feature]==1.0])==0:
+                return None, None, None
+        elif self.types[best_feature] == FeaturesTypes.CLASSES:
+            if len(self.labels[features_transpose[best_feature]==best_shreshold])==0 or len(self.labels[features_transpose[best_feature]!=best_shreshold])==0:
+                return None, None, None
+        elif self.types[best_feature] == FeaturesTypes.REAL:
+            if len(self.labels[features_transpose[best_feature]<best_shreshold])==0 or len(self.labels[features_transpose[best_feature]>=best_shreshold])==0:
+                return None, None, None 
+        else:
+            raise(Exception("Unknown type"))
+        return best_feature, best_gini, best_shreshold
 
     def get_best_gain(self) -> Tuple[int, float]:
         """Compute the feature along which splitting provides the best gain
@@ -69,25 +189,58 @@ class PointSet:
             The best Gini gain achievable by splitting this set along one of
             its features.
         """
-        all_gini = []
-        # get the transpose of the features matrix
-        features_transpose = self.features.T
-        gini = self.get_gini()
-        for feature in features_transpose:
-            # get the slice of self.labels for which the feature is 0
-            labels_0 = self.labels[feature==0.0]
-            features_0 = self.features[feature==0.0]
-            pointSet_0 = PointSet(features_0, labels_0, self.types)
-            # get the slice of self.labels for which the feature is 1
-            labels_1 = self.labels[feature==1.0]
-            features_1 = self.features[feature==1.0]
-            pointSet_1 = PointSet(features_1, labels_1, self.types)
-            gini_gain = gini-((len(labels_0)/len(self.labels))*pointSet_0.get_gini() + (len(labels_1)/len(self.labels))*pointSet_1.get_gini())
-            all_gini +=[gini_gain]
-        best_feature = np.argmax(np.array(all_gini))
-        best_gini = np.array(all_gini).max()
-        #print(best_feature)
-        if len(self.labels[features_transpose[best_feature]==0.0])==0 or len(self.labels[features_transpose[best_feature]==1.0])==0:
-            return None, None
+        best_feature, best_gini, best_threshold = self.get_best_gain_threshold()
+        self.best_split_found = True
+        self.best_feature = best_feature
+        self.best_gini = best_gini
+        self.best_threshold = best_threshold
         return best_feature, best_gini
+    
+    def get_best_threshold(self) -> float:
+        if self.best_split_found == False:
+            raise(Exception("No split has been found yet"))
+        # if we need we distinguish the reasons we get None: no split possible or Boolean feature
+        return self.best_threshold
+    
+    
+    def split_point_set(self, feature: int, threshold: int) -> Tuple['PointSet', 'PointSet']:
+        if feature == None:
+            return None, None
+        type = self.types[feature]
+        if type==FeaturesTypes.BOOLEAN:
+            features_transpose = self.features.T
+            labels_0 = self.labels[features_transpose[feature]==0.0]
+            features_0 = self.features[features_transpose[feature]==0.0]
+            pointSet_0 = PointSet(features_0, labels_0, self.types)
+            labels_1 = self.labels[features_transpose[feature]==1.0]
+            features_1 = self.features[features_transpose[feature]==1.0]
+            pointSet_1 = PointSet(features_1, labels_1, self.types)
+        elif type==FeaturesTypes.CLASSES:
+            features_transpose = self.features.T
+            labels_0 = self.labels[features_transpose[feature]==threshold]
+            features_0 = self.features[features_transpose[feature]==threshold]
+            pointSet_0 = PointSet(features_0, labels_0, self.types)
+            labels_1 = self.labels[features_transpose[feature]!=threshold]
+            features_1 = self.features[features_transpose[feature]!=threshold]
+            pointSet_1 = PointSet(features_1, labels_1, self.types)
+        elif type==FeaturesTypes.REAL:
+            features_transpose = self.features.T
+            labels_0 = self.labels[features_transpose[feature]<threshold]
+            features_0 = self.features[features_transpose[feature]<threshold]
+            pointSet_0 = PointSet(features_0, labels_0, self.types)
+            labels_1 = self.labels[features_transpose[feature]>=threshold]
+            features_1 = self.features[features_transpose[feature]>=threshold]
+            pointSet_1 = PointSet(features_1, labels_1, self.types)
+        else:
+            raise(Exception("Unknown type"))
+        return pointSet_0, pointSet_1
+    
+    def get_best_split(self, min_split_points) -> Tuple[int, float, 'PointSet', 'PointSet']:
+        best_feature, _, threshold = self.get_best_gain_threshold(min_split_points)
+        pointSet_0, pointSet_1 = self.split_point_set(best_feature, threshold=threshold)
+        return pointSet_0, pointSet_1, best_feature, threshold
+
+    
+    
+    
 
