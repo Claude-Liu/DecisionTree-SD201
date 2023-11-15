@@ -34,11 +34,15 @@ class Tree:
         
         self.root = Node(PointSet(features, labels, types))
         self.split_all(self.root, h, min_split_points)
+        print("Tree is built successfully!")
 
     def split_all(self,current_node: Node, h: int, min_split_points: int):
+        """split a give node to a subtree in decisionb tree by recursion"""
         if h==0:
             return
         if len(current_node) <= min_split_points:
+            return
+        if len(current_node) < 2*min_split_points:
             return
         if current_node.split(min_split_points)==True:
             self.split_all(current_node.leftChild, h-1, min_split_points)
@@ -64,6 +68,7 @@ class Tree:
         return self.decide_(features, self.root)
 
     def decide_(self, features, current_node: Node):
+        """predict the label of a point using the tree by recursion"""
         def vote(labels):
             return (labels==True).sum() > (labels==False).sum()
         

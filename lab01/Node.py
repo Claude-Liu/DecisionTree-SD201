@@ -3,7 +3,7 @@ from typing import List
 from PointSet import PointSet, FeaturesTypes
 
 class Node:
-
+    """a class representing a node of a decision tree."""
     def __init__(self, pointSet: PointSet):
         self.pointSet = pointSet
         self.best_feature = None
